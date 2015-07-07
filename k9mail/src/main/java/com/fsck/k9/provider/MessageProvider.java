@@ -21,6 +21,7 @@ import android.util.Log;
 
 import com.fsck.k9.Account;
 import com.fsck.k9.AccountStats;
+import com.fsck.k9.BuildConfig;
 import com.fsck.k9.K9;
 import com.fsck.k9.Preferences;
 import com.fsck.k9.activity.FolderInfoHolder;
@@ -202,9 +203,14 @@ public class MessageProvider extends ContentProvider {
         @Override
         public String getField(final MessageInfoHolder source) {
             final LocalMessage message = source.message;
-            return CONTENT_URI + "/delete_message/"
-                   + message.getAccount().getAccountNumber() + "/"
-                   + message.getFolder().getName() + "/" + message.getUid();
+            int accountNumber = message.getAccount().getAccountNumber();
+            return CONTENT_URI.buildUpon()
+                    .appendPath("delete_message")
+                    .appendPath(Integer.toString(accountNumber))
+                    .appendPath(message.getFolder().getName())
+                    .appendPath(message.getUid())
+                    .build()
+                    .toString();
         }
     }
     public static class SenderExtractor implements FieldExtractor<MessageInfoHolder, CharSequence> {
@@ -940,7 +946,7 @@ public class MessageProvider extends ContentProvider {
         }
     }
 
-    public static final String AUTHORITY = "com.fsck.k9.messageprovider";
+    public static final String AUTHORITY = BuildConfig.APPLICATION_ID + ".messageprovider";
 
     public static final Uri CONTENT_URI = Uri.parse("content://" + AUTHORITY);
 

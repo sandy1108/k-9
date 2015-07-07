@@ -32,8 +32,6 @@ import static com.fsck.k9.mail.CertificateValidationException.Reason.MissingCapa
 public class SmtpTransport extends Transport {
     private TrustedSocketFactory mTrustedSocketFactory;
 
-    public static final String TRANSPORT_TYPE = "SMTP";
-
     /**
      * Decodes a SmtpTransport URI.
      *
@@ -77,13 +75,13 @@ public class SmtpTransport extends Transport {
          */
         if (scheme.equals("smtp")) {
             connectionSecurity = ConnectionSecurity.NONE;
-            port = 587;
+            port = ServerSettings.Type.SMTP.defaultPort;
         } else if (scheme.startsWith("smtp+tls")) {
             connectionSecurity = ConnectionSecurity.STARTTLS_REQUIRED;
-            port = 587;
+            port = ServerSettings.Type.SMTP.defaultPort;
         } else if (scheme.startsWith("smtp+ssl")) {
             connectionSecurity = ConnectionSecurity.SSL_TLS_REQUIRED;
-            port = 465;
+            port = ServerSettings.Type.SMTP.defaultTlsPort;
         } else {
             throw new IllegalArgumentException("Unsupported protocol (" + scheme + ")");
         }
@@ -115,7 +113,7 @@ public class SmtpTransport extends Transport {
             }
         }
 
-        return new ServerSettings(TRANSPORT_TYPE, host, port, connectionSecurity,
+        return new ServerSettings(ServerSettings.Type.SMTP, host, port, connectionSecurity,
                 authType, username, password, clientCertificateAlias);
     }
 
@@ -493,7 +491,6 @@ public class SmtpTransport extends Transport {
 
     private void sendMessageTo(List<String> addresses, Message message)
     throws MessagingException {
-        boolean possibleSend = false;
 
         close();
         open();
@@ -505,13 +502,11 @@ public class SmtpTransport extends Transport {
         // the size of messages, count the message's size before sending it
         if (mLargestAcceptableMessage > 0 && message.hasAttachments()) {
             if (message.calculateSize() > mLargestAcceptableMessage) {
-                MessagingException me = new MessagingException("Message too large for server");
-                //TODO this looks rather suspicious... shouldn't it be true?
-                me.setPermanentFailure(possibleSend);
-                throw me;
+                throw new MessagingException("Message too large for server", true);
             }
         }
 
+        boolean entireMessageSent = false;
         Address[] from = message.getFrom();
         try {
             executeSimpleCommand("MAIL FROM:" + "<" + from[0].getAddress() + ">"
@@ -529,20 +524,14 @@ public class SmtpTransport extends Transport {
             // We use BufferedOutputStream. So make sure to call flush() !
             msgOut.flush();
 
-            possibleSend = true; // After the "\r\n." is attempted, we may have sent the message
+            entireMessageSent = true; // After the "\r\n." is attempted, we may have sent the message
             executeSimpleCommand("\r\n.");
+        } catch (NegativeSmtpReplyException e) {
+            throw e;
         } catch (Exception e) {
             MessagingException me = new MessagingException("Unable to send message", e);
+            me.setPermanentFailure(entireMessageSent);
 
-            // "5xx text" -responses are permanent failures
-            String msg = e.getMessage();
-            if (msg != null && msg.startsWith("5")) {
-                Log.w(LOG_TAG, "handling 5xx SMTP error code as a permanent failure");
-                possibleSend = false;
-            }
-
-            //TODO this looks rather suspicious... why is possibleSend used, and why are 5xx NOT permanent (in contrast to the log text)
-            me.setPermanentFailure(possibleSend);
             throw me;
         } finally {
             close();
@@ -777,9 +766,13 @@ public class SmtpTransport extends Transport {
         private final String mReplyText;
 
         public NegativeSmtpReplyException(int replyCode, String replyText) {
-            super("Negative SMTP reply: " + replyCode + " " + replyText);
+            super("Negative SMTP reply: " + replyCode + " " + replyText, isPermanentSmtpError(replyCode));
             mReplyCode = replyCode;
             mReplyText = replyText;
+        }
+
+        private static boolean isPermanentSmtpError(int replyCode) {
+            return replyCode >= 500 && replyCode <= 599;
         }
 
         public int getReplyCode() {
